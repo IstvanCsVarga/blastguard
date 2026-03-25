@@ -1,6 +1,8 @@
 import OpenAI from "openai";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getClient(): OpenAI {
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
 
 export async function diagnoseIncident(
   service: string,
@@ -8,7 +10,7 @@ export async function diagnoseIncident(
   commits: string[],
   prs: string[]
 ): Promise<string> {
-  const response = await openai.chat.completions.create({
+  const response = await getClient().chat.completions.create({
     model: "gpt-4o",
     temperature: 0.3,
     max_tokens: 500,
@@ -41,7 +43,7 @@ export async function proposeRemediation(
   service: string,
   diagnosis: string
 ): Promise<string> {
-  const response = await openai.chat.completions.create({
+  const response = await getClient().chat.completions.create({
     model: "gpt-4o",
     temperature: 0.3,
     max_tokens: 300,
