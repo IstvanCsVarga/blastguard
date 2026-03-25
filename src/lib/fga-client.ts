@@ -29,7 +29,7 @@ function getClient(): OpenFgaClient | null {
             method: CredentialsMethod.ClientCredentials,
             config: {
               apiTokenIssuer: "fga.us.auth0.com",
-              apiAudience: "https://api.us1.fga.dev/",
+              apiAudience: `${apiUrl}/`,
               clientId,
               clientSecret,
             },

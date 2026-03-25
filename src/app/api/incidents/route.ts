@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createIncident, listIncidents, addFgaTuple } from "@/lib/db";
 import { auditEvent } from "@/lib/audit";
+import { writeTuple, isFgaConfigured } from "@/lib/fga-client";
 
 export async function GET() {
   const incidents = await listIncidents();
@@ -20,7 +21,10 @@ export async function POST(req: NextRequest) {
 
   const incident = await createIncident({ title, description, severity, affected_service });
 
-  // JIT permission grant: create read-only FGA tuple for the affected service
+  // JIT permission grant: write read-only FGA tuple to OpenFGA + local tracking
+  if (isFgaConfigured()) {
+    await writeTuple("blastguard", "reader", affected_service);
+  }
   await addFgaTuple({
     incident_id: incident.id,
     agent: "blastguard",
