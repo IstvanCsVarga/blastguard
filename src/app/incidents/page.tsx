@@ -4,22 +4,22 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import type { Incident } from "@/lib/db";
 
-const severityColors: Record<string, string> = {
-  P1: "bg-red-500",
-  P2: "bg-orange-500",
-  P3: "bg-yellow-500",
-  P4: "bg-blue-500",
+const severityStyle: Record<string, string> = {
+  P1: "bg-red-500/20 text-red-400 border-red-500/20",
+  P2: "bg-orange-500/20 text-orange-400 border-orange-500/20",
+  P3: "bg-yellow-500/20 text-yellow-400 border-yellow-500/20",
+  P4: "bg-blue-500/20 text-blue-400 border-blue-500/20",
 };
 
-const statusLabels: Record<string, { label: string; color: string }> = {
+const statusConfig: Record<string, { label: string; color: string; pulse?: boolean }> = {
   open: { label: "Open", color: "text-zinc-400" },
-  triaging: { label: "Triaging", color: "text-amber-400" },
-  investigating: { label: "Investigating", color: "text-blue-400" },
-  diagnosing: { label: "Diagnosing", color: "text-purple-400" },
-  proposing: { label: "Proposing Fix", color: "text-cyan-400" },
-  awaiting_approval: { label: "Awaiting Approval", color: "text-yellow-400 animate-pulse" },
-  remediating: { label: "Remediating", color: "text-orange-400" },
-  verifying: { label: "Verifying", color: "text-green-400" },
+  triaging: { label: "Triaging", color: "text-amber-400", pulse: true },
+  investigating: { label: "Investigating", color: "text-blue-400", pulse: true },
+  diagnosing: { label: "Diagnosing", color: "text-purple-400", pulse: true },
+  proposing: { label: "Proposing", color: "text-cyan-400", pulse: true },
+  awaiting_approval: { label: "Awaiting Approval", color: "text-yellow-400", pulse: true },
+  remediating: { label: "Remediating", color: "text-orange-400", pulse: true },
+  verifying: { label: "Verifying", color: "text-green-400", pulse: true },
   closed: { label: "Closed", color: "text-zinc-500" },
 };
 
@@ -42,7 +42,7 @@ export default function IncidentsPage() {
 
   useEffect(() => {
     loadIncidents();
-    const interval = setInterval(loadIncidents, 3000);
+    const interval = setInterval(loadIncidents, 2000);
     return () => clearInterval(interval);
   }, []);
 
@@ -61,91 +61,90 @@ export default function IncidentsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 p-8">
-      <div className="max-w-5xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
+    <div className="min-h-screen bg-zinc-950">
+      <header className="border-b border-zinc-800/50 bg-zinc-950/80 backdrop-blur-sm sticky top-0 z-10">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">
+            <Link href="/" className="text-2xl font-bold">
               Blast<span className="text-red-500">Guard</span>
-            </h1>
-            <p className="text-zinc-500 text-sm mt-1">Incident Response Dashboard</p>
+            </Link>
+            <p className="text-zinc-600 text-xs mt-0.5">Incident Response Dashboard</p>
           </div>
           <div className="flex items-center gap-3">
             <button
               onClick={() => setShowCreate(!showCreate)}
-              className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-white font-medium transition-colors"
+              className="px-5 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-white font-semibold text-sm transition-all shadow-lg shadow-red-500/20"
             >
               + New Incident
             </button>
             {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-            <a
-              href="/auth/logout"
-              className="px-3 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
-            >
+            <a href="/auth/logout" className="px-3 py-2 text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
               Logout
             </a>
           </div>
         </div>
+      </header>
 
+      <div className="max-w-5xl mx-auto px-6 py-6">
         {showCreate && (
           <form
             onSubmit={handleCreate}
-            className="mb-8 p-6 rounded-lg bg-zinc-900 border border-zinc-800 space-y-4"
+            className="mb-6 p-6 rounded-2xl bg-zinc-900/50 border border-zinc-800/50 space-y-4"
           >
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm text-zinc-400 mb-1">Title</label>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Title</label>
                 <input
                   type="text"
                   required
                   value={form.title}
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
                   placeholder="API Gateway OOMKilling"
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-100 placeholder:text-zinc-600"
+                  className="w-full px-4 py-2.5 bg-zinc-800/50 border border-zinc-700/50 rounded-xl text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500/30 transition-all"
                 />
               </div>
               <div>
-                <label className="block text-sm text-zinc-400 mb-1">Affected Service</label>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Affected Service</label>
                 <input
                   type="text"
                   required
                   value={form.affected_service}
                   onChange={(e) => setForm({ ...form, affected_service: e.target.value })}
                   placeholder="api-gateway"
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-100 placeholder:text-zinc-600"
+                  className="w-full px-4 py-2.5 bg-zinc-800/50 border border-zinc-700/50 rounded-xl text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500/30 transition-all"
                 />
               </div>
             </div>
             <div>
-              <label className="block text-sm text-zinc-400 mb-1">Description</label>
+              <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Description</label>
               <textarea
                 required
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 placeholder="Pods are being OOMKilled after deployment #487..."
                 rows={3}
-                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-100 placeholder:text-zinc-600"
+                className="w-full px-4 py-2.5 bg-zinc-800/50 border border-zinc-700/50 rounded-xl text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500/30 transition-all resize-none"
               />
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-end gap-4">
               <div>
-                <label className="block text-sm text-zinc-400 mb-1">Severity</label>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Severity</label>
                 <select
                   value={form.severity}
                   onChange={(e) => setForm({ ...form, severity: e.target.value })}
-                  className="px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-100"
+                  className="px-4 py-2.5 bg-zinc-800/50 border border-zinc-700/50 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-red-500/30"
                 >
-                  <option value="P1">P1 - Critical</option>
-                  <option value="P2">P2 - High</option>
-                  <option value="P3">P3 - Medium</option>
-                  <option value="P4">P4 - Low</option>
+                  <option value="P1">P1 — Critical</option>
+                  <option value="P2">P2 — High</option>
+                  <option value="P3">P3 — Medium</option>
+                  <option value="P4">P4 — Low</option>
                 </select>
               </div>
               <div className="flex-1" />
               <button
                 type="submit"
                 disabled={creating}
-                className="px-6 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg text-white font-medium transition-colors"
+                className="px-6 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 rounded-xl text-white font-semibold text-sm transition-all shadow-lg shadow-red-500/20"
               >
                 {creating ? "Creating..." : "Create & Deploy Agent"}
               </button>
@@ -153,31 +152,38 @@ export default function IncidentsPage() {
           </form>
         )}
 
-        <div className="space-y-3">
+        <div className="space-y-2">
           {incidents.length === 0 && (
-            <div className="text-center py-16 text-zinc-600">
-              No incidents yet. Create one to deploy the BlastGuard agent.
+            <div className="text-center py-20">
+              <div className="text-zinc-700 text-5xl mb-4">○</div>
+              <div className="text-zinc-600 text-sm">No incidents. Create one to deploy the BlastGuard agent.</div>
             </div>
           )}
           {incidents.map((inc) => {
-            const status = statusLabels[inc.status] ?? statusLabels.open;
+            const status = statusConfig[inc.status] ?? statusConfig.open;
             return (
               <Link
                 key={inc.id}
                 href={`/incidents/${inc.id}`}
-                className="block p-4 rounded-lg bg-zinc-900 border border-zinc-800 hover:border-zinc-600 transition-colors"
+                className="block p-4 rounded-xl bg-zinc-900/30 border border-zinc-800/50 hover:bg-zinc-900/60 hover:border-zinc-700/50 transition-all group"
               >
                 <div className="flex items-center gap-3">
-                  <span
-                    className={`w-2.5 h-2.5 rounded-full ${severityColors[inc.severity] ?? "bg-zinc-500"}`}
-                  />
-                  <span className="font-mono text-sm text-zinc-500">{inc.id}</span>
-                  <span className="font-medium text-zinc-200">{inc.title}</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${severityStyle[inc.severity] ?? "bg-zinc-500/20 text-zinc-400 border-zinc-500/20"}`}>
+                    {inc.severity}
+                  </span>
+                  <span className="font-mono text-xs text-zinc-600">{inc.id}</span>
+                  <span className="font-medium text-zinc-200 group-hover:text-white transition-colors">{inc.title}</span>
                   <span className="flex-1" />
-                  <span className={`text-sm font-medium ${status.color}`}>
+                  <span className={`text-xs font-medium flex items-center gap-1.5 ${status.color}`}>
+                    {status.pulse && (
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-current opacity-75" />
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-current" />
+                      </span>
+                    )}
                     {status.label}
                   </span>
-                  <span className="text-xs text-zinc-600">
+                  <span className="text-[10px] text-zinc-700 font-mono bg-zinc-800/50 px-2 py-0.5 rounded">
                     {inc.affected_service}
                   </span>
                 </div>
