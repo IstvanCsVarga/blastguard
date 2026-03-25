@@ -17,7 +17,13 @@ export async function POST(
     return NextResponse.json({ error: "Incident already in progress" }, { status: 400 });
   }
 
-  runAgentWorkflow(id).catch(console.error);
+  // Run LangGraph agent workflow asynchronously
+  runAgentWorkflow(id).catch((err) => {
+    // Interrupts are expected (CIBA approval gate)
+    if (err?.name !== "GraphInterrupt") {
+      console.error("Agent workflow error:", err);
+    }
+  });
 
   return NextResponse.json({ message: "Agent deployed", incident_id: id });
 }

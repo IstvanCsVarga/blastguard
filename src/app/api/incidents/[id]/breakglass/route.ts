@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIncident, setBreakGlass } from "@/lib/db";
 import { auditEvent } from "@/lib/audit";
-import { executeRemediation } from "@/lib/agent-workflow";
+import { executePostApproval } from "@/lib/agent-workflow";
 
 export async function POST(
   _req: NextRequest,
@@ -36,7 +36,7 @@ export async function POST(
       "BREAK GLASS: Bypassing pending CIBA approval",
       "Proceeding to remediation without human approval"
     );
-    executeRemediation(id, incident.affected_service).catch(console.error);
+    executePostApproval(id, incident.affected_service).catch(console.error);
   }
 
   return NextResponse.json({ message: "Break glass activated", incident_id: id });

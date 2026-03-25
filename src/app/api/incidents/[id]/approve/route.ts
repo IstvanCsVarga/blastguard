@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIncident } from "@/lib/db";
 import { auditEvent } from "@/lib/audit";
-import { executeRemediation } from "@/lib/agent-workflow";
+import { resumeAfterApproval } from "@/lib/agent-workflow";
 
 export async function POST(
   _req: NextRequest,
@@ -26,10 +26,10 @@ export async function POST(
     "human_approval",
     "operator",
     "CIBA: Operator approved remediation",
-    `Approved action: ${incident.remediation_plan}`
+    `Approved: ${incident.remediation_plan}`
   );
 
-  executeRemediation(id, incident.affected_service).catch(console.error);
+  resumeAfterApproval(id).catch(console.error);
 
   return NextResponse.json({ message: "Approved", incident_id: id });
 }
