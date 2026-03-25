@@ -49,7 +49,7 @@ export default function Home() {
           {/* CTA */}
           <div className="flex gap-4 justify-center">
             <a
-              href="/auth/login"
+              href="/auth/login?returnTo=/incidents"
               className="px-8 py-3.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold transition-all shadow-lg shadow-red-500/20 hover:shadow-red-500/30"
             >
               Sign In to Dashboard
