@@ -1,6 +1,8 @@
 import { auth0 } from "@/lib/auth0";
 import { NextRequest, NextResponse } from "next/server";
 
+export const runtime = "nodejs";
+
 export async function middleware(req: NextRequest) {
   const authRes = await auth0.middleware(req);
 
