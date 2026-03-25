@@ -7,7 +7,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const incident = getIncident(id);
+  const incident = await getIncident(id);
 
   if (!incident) {
     return NextResponse.json({ error: "Incident not found" }, { status: 404 });

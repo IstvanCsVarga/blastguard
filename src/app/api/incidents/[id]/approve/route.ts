@@ -8,7 +8,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const incident = getIncident(id);
+  const incident = await getIncident(id);
 
   if (!incident) {
     return NextResponse.json({ error: "Incident not found" }, { status: 404 });
@@ -21,12 +21,12 @@ export async function POST(
     );
   }
 
-  auditEvent(
+  await auditEvent(
     id,
     "human_approval",
     "operator",
-    "CIBA: Human approved remediation",
-    `Operator approved: rollback ${incident.affected_service}`
+    "CIBA: Operator approved remediation",
+    `Approved action: ${incident.remediation_plan}`
   );
 
   executeRemediation(id, incident.affected_service).catch(console.error);

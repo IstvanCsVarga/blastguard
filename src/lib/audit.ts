@@ -1,13 +1,13 @@
 import { addAuditEntry, getActiveTuples } from "./db";
 
-export function auditEvent(
+export async function auditEvent(
   incidentId: string,
   eventType: string,
   actor: string,
   action: string,
   details?: string
 ) {
-  const tuples = getActiveTuples(incidentId);
+  const tuples = await getActiveTuples(incidentId);
   const snapshot = JSON.stringify(
     tuples.map((t) => ({
       agent: t.agent,

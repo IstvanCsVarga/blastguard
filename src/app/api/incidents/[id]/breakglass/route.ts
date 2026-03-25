@@ -8,7 +8,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const incident = getIncident(id);
+  const incident = await getIncident(id);
 
   if (!incident) {
     return NextResponse.json({ error: "Incident not found" }, { status: 404 });
@@ -18,9 +18,9 @@ export async function POST(
     return NextResponse.json({ error: "Incident already closed" }, { status: 400 });
   }
 
-  setBreakGlass(id, true);
+  await setBreakGlass(id, true);
 
-  auditEvent(
+  await auditEvent(
     id,
     "break_glass",
     "operator",
@@ -29,7 +29,7 @@ export async function POST(
   );
 
   if (incident.status === "awaiting_approval") {
-    auditEvent(
+    await auditEvent(
       id,
       "break_glass",
       "system",

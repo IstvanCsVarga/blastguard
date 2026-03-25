@@ -1,26 +1,8 @@
+import { Redis } from "@upstash/redis";
 import { v4 as uuid } from "uuid";
 
-// In-memory store with globalThis persistence to survive Next.js hot reloads.
-// For a production system this would be a real database.
-
-type StoreState = {
-  incidents: Map<string, Incident>;
-  auditEntries: AuditEntry[];
-  fgaTuples: FgaTuple[];
-};
-
-const globalStore = globalThis as unknown as { __blastguard_store?: StoreState };
-
-function getStore(): StoreState {
-  if (!globalStore.__blastguard_store) {
-    globalStore.__blastguard_store = {
-      incidents: new Map(),
-      auditEntries: [],
-      fgaTuples: [],
-    };
-  }
-  return globalStore.__blastguard_store;
-}
+// Upstash Redis for serverless persistence.
+// Falls back to in-memory store if no Redis URL configured (local dev).
 
 export type Incident = {
   id: string;
@@ -59,28 +41,53 @@ export type FgaTuple = {
   revoked_at: string | null;
 };
 
-// Use getStore() accessors for hot-reload persistence
-function incidents() { return getStore().incidents; }
-function auditEntries() { return getStore().auditEntries; }
-function fgaTuples() { return getStore().fgaTuples; }
+// ── Redis Client ──
+
+let _redis: Redis | null = null;
+
+function getRedis(): Redis | null {
+  if (_redis) return _redis;
+  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    _redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+    return _redis;
+  }
+  return null;
+}
+
+// ── In-Memory Fallback (for local dev without Redis) ──
+
+type MemStore = {
+  incidents: Map<string, Incident>;
+  audit: AuditEntry[];
+  tuples: FgaTuple[];
+};
+const g = globalThis as unknown as { __bg?: MemStore };
+function mem(): MemStore {
+  if (!g.__bg) g.__bg = { incidents: new Map(), audit: [], tuples: [] };
+  return g.__bg;
+}
+
+// ── Helper ──
 
 function now(): string {
   return new Date().toISOString();
 }
 
-export function createIncident(data: {
+// ── Incidents ──
+
+export async function createIncident(data: {
   title: string;
   description: string;
   severity: string;
   affected_service: string;
-}): Incident {
+}): Promise<Incident> {
   const id = `INC-${uuid().slice(0, 8).toUpperCase()}`;
   const incident: Incident = {
     id,
-    title: data.title,
-    description: data.description,
-    severity: data.severity,
-    affected_service: data.affected_service,
+    ...data,
     status: "open",
     break_glass: 0,
     diagnosis: null,
@@ -89,58 +96,82 @@ export function createIncident(data: {
     updated_at: now(),
     closed_at: null,
   };
-  incidents().set(id, incident);
-  return { ...incident };
+
+  const redis = getRedis();
+  if (redis) {
+    await redis.set(`incident:${id}`, JSON.stringify(incident));
+    await redis.lpush("incidents:ids", id);
+  } else {
+    mem().incidents.set(id, incident);
+  }
+  return incident;
 }
 
-export function getIncident(id: string): Incident | undefined {
-  const inc = incidents().get(id);
+export async function getIncident(id: string): Promise<Incident | undefined> {
+  const redis = getRedis();
+  if (redis) {
+    const raw = await redis.get<string>(`incident:${id}`);
+    if (!raw) return undefined;
+    return typeof raw === "string" ? JSON.parse(raw) : raw as unknown as Incident;
+  }
+  const inc = mem().incidents.get(id);
   return inc ? { ...inc } : undefined;
 }
 
-export function listIncidents(): Incident[] {
-  return Array.from(incidents().values())
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .map((i) => ({ ...i }));
+export async function listIncidents(): Promise<Incident[]> {
+  const redis = getRedis();
+  if (redis) {
+    const ids = await redis.lrange<string>("incidents:ids", 0, -1);
+    if (!ids || ids.length === 0) return [];
+    const results = await Promise.all(ids.map((id) => getIncident(id)));
+    return results.filter(Boolean) as Incident[];
+  }
+  return Array.from(mem().incidents.values())
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
-export function updateIncidentStatus(id: string, status: string): void {
-  const inc = incidents().get(id);
-  if (!inc) return;
-  inc.status = status;
-  inc.updated_at = now();
-  if (status === "closed") inc.closed_at = now();
+async function updateIncidentField(id: string, updates: Partial<Incident>): Promise<void> {
+  const redis = getRedis();
+  if (redis) {
+    const inc = await getIncident(id);
+    if (!inc) return;
+    const updated = { ...inc, ...updates, updated_at: now() };
+    await redis.set(`incident:${id}`, JSON.stringify(updated));
+  } else {
+    const inc = mem().incidents.get(id);
+    if (!inc) return;
+    Object.assign(inc, updates, { updated_at: now() });
+  }
 }
 
-export function updateIncidentDiagnosis(id: string, diagnosis: string): void {
-  const inc = incidents().get(id);
-  if (!inc) return;
-  inc.diagnosis = diagnosis;
-  inc.updated_at = now();
+export async function updateIncidentStatus(id: string, status: string): Promise<void> {
+  const extra: Partial<Incident> = { status };
+  if (status === "closed") extra.closed_at = now();
+  await updateIncidentField(id, extra);
 }
 
-export function updateIncidentRemediation(id: string, plan: string): void {
-  const inc = incidents().get(id);
-  if (!inc) return;
-  inc.remediation_plan = plan;
-  inc.updated_at = now();
+export async function updateIncidentDiagnosis(id: string, diagnosis: string): Promise<void> {
+  await updateIncidentField(id, { diagnosis });
 }
 
-export function setBreakGlass(id: string, enabled: boolean): void {
-  const inc = incidents().get(id);
-  if (!inc) return;
-  inc.break_glass = enabled ? 1 : 0;
-  inc.updated_at = now();
+export async function updateIncidentRemediation(id: string, plan: string): Promise<void> {
+  await updateIncidentField(id, { remediation_plan: plan });
 }
 
-export function addAuditEntry(data: {
+export async function setBreakGlass(id: string, enabled: boolean): Promise<void> {
+  await updateIncidentField(id, { break_glass: enabled ? 1 : 0 });
+}
+
+// ── Audit Log ──
+
+export async function addAuditEntry(data: {
   incident_id: string;
   event_type: string;
   actor: string;
   action: string;
   details?: string;
   permissions_snapshot?: string;
-}): AuditEntry {
+}): Promise<AuditEntry> {
   const entry: AuditEntry = {
     id: uuid(),
     incident_id: data.incident_id,
@@ -151,22 +182,33 @@ export function addAuditEntry(data: {
     permissions_snapshot: data.permissions_snapshot ?? null,
     created_at: now(),
   };
-  auditEntries().push(entry);
-  return { ...entry };
+
+  const redis = getRedis();
+  if (redis) {
+    await redis.rpush(`audit:${data.incident_id}`, JSON.stringify(entry));
+  } else {
+    mem().audit.push(entry);
+  }
+  return entry;
 }
 
-export function getAuditLog(incidentId: string): AuditEntry[] {
-  return auditEntries()
-    .filter((e) => e.incident_id === incidentId)
-    .map((e) => ({ ...e }));
+export async function getAuditLog(incidentId: string): Promise<AuditEntry[]> {
+  const redis = getRedis();
+  if (redis) {
+    const raw = await redis.lrange<string>(`audit:${incidentId}`, 0, -1);
+    return (raw ?? []).map((r) => (typeof r === "string" ? JSON.parse(r) : r) as AuditEntry);
+  }
+  return mem().audit.filter((e) => e.incident_id === incidentId);
 }
 
-export function addFgaTuple(data: {
+// ── FGA Tuples ──
+
+export async function addFgaTuple(data: {
   incident_id: string;
   agent: string;
   relation: string;
   service: string;
-}): FgaTuple {
+}): Promise<FgaTuple> {
   const tuple: FgaTuple = {
     id: uuid(),
     incident_id: data.incident_id,
@@ -177,38 +219,61 @@ export function addFgaTuple(data: {
     created_at: now(),
     revoked_at: null,
   };
-  fgaTuples().push(tuple);
-  return { ...tuple };
+
+  const redis = getRedis();
+  if (redis) {
+    await redis.rpush(`tuples:${data.incident_id}`, JSON.stringify(tuple));
+  } else {
+    mem().tuples.push(tuple);
+  }
+  return tuple;
 }
 
-export function getActiveTuples(incidentId: string): FgaTuple[] {
-  return fgaTuples()
-    .filter((t) => t.incident_id === incidentId && t.active === 1)
-    .map((t) => ({ ...t }));
+async function getTuplesRaw(incidentId: string): Promise<FgaTuple[]> {
+  const redis = getRedis();
+  if (redis) {
+    const raw = await redis.lrange<string>(`tuples:${incidentId}`, 0, -1);
+    return (raw ?? []).map((r) => (typeof r === "string" ? JSON.parse(r) : r) as FgaTuple);
+  }
+  return mem().tuples.filter((t) => t.incident_id === incidentId);
 }
 
-export function getAllTuples(incidentId: string): FgaTuple[] {
-  return fgaTuples()
-    .filter((t) => t.incident_id === incidentId)
-    .map((t) => ({ ...t }));
+export async function getActiveTuples(incidentId: string): Promise<FgaTuple[]> {
+  return (await getTuplesRaw(incidentId)).filter((t) => t.active === 1);
 }
 
-export function revokeAllTuples(incidentId: string): void {
-  const ts = now();
-  for (const t of fgaTuples()) {
-    if (t.incident_id === incidentId && t.active === 1) {
-      t.active = 0;
-      t.revoked_at = ts;
+export async function getAllTuples(incidentId: string): Promise<FgaTuple[]> {
+  return getTuplesRaw(incidentId);
+}
+
+export async function revokeAllTuples(incidentId: string): Promise<void> {
+  const redis = getRedis();
+  if (redis) {
+    const tuples = await getTuplesRaw(incidentId);
+    const ts = now();
+    const updated = tuples.map((t) =>
+      t.active === 1 ? { ...t, active: 0, revoked_at: ts } : t
+    );
+    await redis.del(`tuples:${incidentId}`);
+    if (updated.length > 0) {
+      await redis.rpush(`tuples:${incidentId}`, ...updated.map((t) => JSON.stringify(t)));
+    }
+  } else {
+    const ts = now();
+    for (const t of mem().tuples) {
+      if (t.incident_id === incidentId && t.active === 1) {
+        t.active = 0;
+        t.revoked_at = ts;
+      }
     }
   }
 }
 
-export function upgradeTupleToWriter(incidentId: string, service: string): void {
-  const exists = fgaTuples().some(
-    (t) => t.incident_id === incidentId && t.service === service && t.relation === "writer" && t.active === 1
-  );
+export async function upgradeTupleToWriter(incidentId: string, service: string): Promise<void> {
+  const tuples = await getActiveTuples(incidentId);
+  const exists = tuples.some((t) => t.service === service && t.relation === "writer");
   if (!exists) {
-    addFgaTuple({
+    await addFgaTuple({
       incident_id: incidentId,
       agent: "blastguard",
       relation: "writer",

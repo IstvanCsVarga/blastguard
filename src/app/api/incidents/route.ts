@@ -3,7 +3,7 @@ import { createIncident, listIncidents, addFgaTuple } from "@/lib/db";
 import { auditEvent } from "@/lib/audit";
 
 export async function GET() {
-  const incidents = listIncidents();
+  const incidents = await listIncidents();
   return NextResponse.json(incidents);
 }
 
@@ -18,17 +18,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const incident = createIncident({ title, description, severity, affected_service });
+  const incident = await createIncident({ title, description, severity, affected_service });
 
   // JIT permission grant: create read-only FGA tuple for the affected service
-  addFgaTuple({
+  await addFgaTuple({
     incident_id: incident.id,
     agent: "blastguard",
     relation: "reader",
     service: affected_service,
   });
 
-  auditEvent(
+  await auditEvent(
     incident.id,
     "incident_created",
     "operator",
@@ -36,12 +36,12 @@ export async function POST(req: NextRequest) {
     `Severity: ${severity}, Service: ${affected_service}`
   );
 
-  auditEvent(
+  await auditEvent(
     incident.id,
     "permission_granted",
     "system",
-    `Read-only access granted to agent for service: ${affected_service}`,
-    `FGA tuple: blastguard -> reader -> ${affected_service}`
+    `FGA: Read-only access granted to agent for service: ${affected_service}`,
+    `Tuple written: blastguard -> reader -> ${affected_service}`
   );
 
   return NextResponse.json(incident, { status: 201 });

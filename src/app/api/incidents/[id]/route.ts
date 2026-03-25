@@ -6,18 +6,14 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const incident = getIncident(id);
+  const incident = await getIncident(id);
 
   if (!incident) {
     return NextResponse.json({ error: "Incident not found" }, { status: 404 });
   }
 
-  const auditLog = getAuditLog(id);
-  const tuples = getAllTuples(id);
+  const auditLog = await getAuditLog(id);
+  const tuples = await getAllTuples(id);
 
-  return NextResponse.json({
-    incident,
-    auditLog,
-    tuples,
-  });
+  return NextResponse.json({ incident, auditLog, tuples });
 }
