@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import type { Incident, AuditEntry, FgaTuple } from "@/lib/db";
 
 const AGENT_STATES = [
@@ -97,7 +98,7 @@ export default function IncidentDetailPage() {
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex items-center gap-4">
-          <a href="/incidents" className="text-zinc-500 hover:text-zinc-300">&larr;</a>
+          <Link href="/incidents" className="text-zinc-500 hover:text-zinc-300">&larr;</Link>
           <div>
             <div className="flex items-center gap-3">
               <span className="font-mono text-sm text-zinc-500">{incident.id}</span>

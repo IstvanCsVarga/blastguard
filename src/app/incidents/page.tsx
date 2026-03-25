@@ -77,6 +77,7 @@ export default function IncidentsPage() {
             >
               + New Incident
             </button>
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a
               href="/auth/logout"
               className="px-3 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
