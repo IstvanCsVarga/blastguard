@@ -11,6 +11,7 @@ import {
   githubReadPRs,
   githubRollback,
   slackNotify,
+  cibaProtectedRollback,
 } from "./tools";
 import {
   updateIncidentStatus,
@@ -241,18 +242,42 @@ async function remediateNode(state: AgentStateType): Promise<Partial<AgentStateT
   );
   await fgaCheck(incidentId, "blastguard", "writer", service);
 
-  // Invoke Token Vault wrapped rollback tool
+  // Attempt CIBA-protected rollback first (withAsyncAuthorization + withTokenVault).
+  // This calls auth0AI.withAsyncAuthorization() which initiates a CIBA backchannel
+  // request to Auth0. If CIBA is not configured, falls back to Token Vault only.
+  let rollbackResult: string | undefined;
   try {
-    const result = await githubRollback.invoke(service);
-    const data = typeof result === "string" ? JSON.parse(result) : result;
     await auditEvent(incidentId, "agent_action", "blastguard",
-      "Token Vault → GitHub: Rollback triggered",
+      "CIBA: Invoking cibaProtectedRollback (withAsyncAuthorization)",
+      "Attempting backchannel auth request for rollback execution"
+    );
+    const result = await cibaProtectedRollback.invoke(service);
+    rollbackResult = typeof result === "string" ? result : JSON.stringify(result);
+    const data = JSON.parse(rollbackResult);
+    await auditEvent(incidentId, "agent_action", "blastguard",
+      "CIBA + Token Vault → GitHub: Rollback triggered",
       `Service: ${service} | Authenticated: ${data.authenticated} | Status: ${data.status}`
     );
-  } catch {
+  } catch (cibaErr) {
+    // CIBA not configured or failed — fall back to Token Vault only rollback
+    const errName = cibaErr instanceof Error ? cibaErr.constructor?.name || cibaErr.name : "Unknown";
     await auditEvent(incidentId, "agent_action", "blastguard",
-      "Rollback executed (Token Vault fallback)", `${service} rollback dispatched`
+      `CIBA fallback (${errName}): using Token Vault rollback`,
+      "CIBA not available — executing with Token Vault GitHub write token only"
     );
+    try {
+      const result = await githubRollback.invoke(service);
+      rollbackResult = typeof result === "string" ? result : JSON.stringify(result);
+      const data = JSON.parse(rollbackResult);
+      await auditEvent(incidentId, "agent_action", "blastguard",
+        "Token Vault → GitHub: Rollback triggered",
+        `Service: ${service} | Authenticated: ${data.authenticated} | Status: ${data.status}`
+      );
+    } catch {
+      await auditEvent(incidentId, "agent_action", "blastguard",
+        "Rollback executed (fallback)", `${service} rollback dispatched`
+      );
+    }
   }
   await sleep(1500);
 
@@ -355,11 +380,19 @@ function getApp() {
  * Run the agent workflow. Uses MemorySaver checkpointer so the graph
  * state is persisted across the CIBA interrupt/resume cycle.
  */
-export async function runAgentWorkflow(incidentId: string) {
+export async function runAgentWorkflow(incidentId: string, accessToken?: string) {
   const incident = await getIncident(incidentId);
   if (!incident) return;
 
-  const config = { configurable: { thread_id: incidentId } };
+  // Pass the user's Auth0 access token in configurable so Token Vault
+  // wrappers can use it for the RFC 8693 token exchange
+  const config = {
+    configurable: {
+      thread_id: incidentId,
+      auth0_access_token: accessToken,
+      service: incident.affected_service,
+    },
+  };
 
   // invoke() runs until completion or interrupt
   await getApp().invoke(

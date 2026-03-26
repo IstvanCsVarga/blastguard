@@ -18,14 +18,16 @@ export type PRInfo = {
 export async function fetchRecentCommits(
   owner: string,
   repo: string,
-  maxCount = 10
+  maxCount = 10,
+  token?: string
 ): Promise<CommitInfo[]> {
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const url = `${GITHUB_API}/repos/${owner}/${repo}/commits?since=${since}&per_page=${maxCount}`;
 
-  const res = await fetch(url, {
-    headers: { Accept: "application/vnd.github.v3+json" },
-  });
+  const headers: Record<string, string> = { Accept: "application/vnd.github.v3+json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(url, { headers });
 
   if (!res.ok) {
     console.error(`GitHub commits API error: ${res.status}`);
@@ -48,13 +50,15 @@ export async function fetchRecentCommits(
 export async function fetchRecentPRs(
   owner: string,
   repo: string,
-  maxCount = 10
+  maxCount = 10,
+  token?: string
 ): Promise<PRInfo[]> {
   const url = `${GITHUB_API}/repos/${owner}/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=${maxCount}`;
 
-  const res = await fetch(url, {
-    headers: { Accept: "application/vnd.github.v3+json" },
-  });
+  const headers: Record<string, string> = { Accept: "application/vnd.github.v3+json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(url, { headers });
 
   if (!res.ok) {
     console.error(`GitHub PRs API error: ${res.status}`);
