@@ -4,6 +4,7 @@ import {
   interrupt,
   Command,
   END,
+  GraphInterrupt,
 } from "@langchain/langgraph";
 import { AgentState, type AgentStateType } from "./state";
 import {
@@ -70,13 +71,21 @@ async function fgaRevoke(incidentId: string, agent: string, service: string) {
 // ── Tool invocation helpers ───────────────────────────────────
 // These call the Token Vault wrapped tools and handle the case
 // where Token Vault interrupts (user hasn't connected their account).
+// The @auth0/ai-langchain SDK converts Token Vault failures to
+// GraphInterrupt, so we must catch it explicitly to prevent the
+// entire LangGraph workflow from pausing.
 
 async function invokeGitHubTool(
   tool: { invoke: (input: string) => Promise<unknown> },
   input: string,
   incidentId: string,
-  label: string
+  label: string,
+  fallbackToken?: string
 ): Promise<string[]> {
+  const { fetchRecentCommits, fetchRecentPRs, formatCommitsForLLM, formatPRsForLLM } = await import("@/lib/github");
+  const owner = process.env.DEMO_REPO_OWNER || "netbirdio";
+  const repo = process.env.DEMO_REPO_NAME || "netbird";
+
   try {
     const result = await tool.invoke(input);
     const data = typeof result === "string" ? JSON.parse(result) : result;
@@ -87,37 +96,34 @@ async function invokeGitHubTool(
     );
     return items;
   } catch (err: unknown) {
-    // Token Vault interrupt = user hasn't connected GitHub account
-    // Fall back to unauthenticated GitHub API
-    const name = err instanceof Error ? err.constructor?.name : "Unknown";
+    // The @auth0/ai-langchain SDK throws GraphInterrupt when Token Vault
+    // exchange fails. We MUST catch it here to prevent the LangGraph
+    // workflow from pausing. Fall back to direct GitHub API call.
+    const name = err instanceof Error
+      ? err.constructor?.name || err.name
+      : "Unknown";
+    const isTokenVaultFailure = err instanceof GraphInterrupt
+      || name === "GraphInterrupt"
+      || name === "TokenVaultInterrupt"
+      || name === "Auth0Interrupt";
+
     await auditEvent(incidentId, "agent_action", "blastguard",
-      `Token Vault: ${name} — falling back to public API`,
-      `Connection: github | User may need to connect their GitHub account`
+      fallbackToken
+        ? `Token Vault → GitHub: ${label} (authenticated via pre-exchange)`
+        : `Token Vault: ${name} — unauthenticated fallback`,
+      fallbackToken
+        ? "Token exchanged via Auth0 Token Vault (RFC 8693) in stream route"
+        : isTokenVaultFailure
+          ? "User may need to connect GitHub via Connected Accounts"
+          : String(err)
     );
-    // Re-throw if it's a real error, otherwise fall back
-    if (name === "TokenVaultInterrupt" || name === "Auth0Interrupt") {
-      // Expected: Token Vault not configured or user not connected
-      // Fall back to direct API call
-      const { fetchRecentCommits, fetchRecentPRs, formatCommitsForLLM, formatPRsForLLM } = await import("@/lib/github");
-      const owner = process.env.DEMO_REPO_OWNER || "netbirdio";
-      const repo = process.env.DEMO_REPO_NAME || "netbird";
-      if (label.includes("commit")) {
-        const commits = await fetchRecentCommits(owner, repo, 10);
-        return formatCommitsForLLM(commits);
-      } else {
-        const prs = await fetchRecentPRs(owner, repo, 10);
-        return formatPRsForLLM(prs);
-      }
-    }
-    // For any other error, also fall back gracefully
-    const { fetchRecentCommits, fetchRecentPRs, formatCommitsForLLM, formatPRsForLLM } = await import("@/lib/github");
-    const owner = process.env.DEMO_REPO_OWNER || "netbirdio";
-    const repo = process.env.DEMO_REPO_NAME || "netbird";
+
+    // Fall back to direct GitHub API (with optional token from pre-exchange)
     if (label.includes("commit")) {
-      const commits = await fetchRecentCommits(owner, repo, 10);
+      const commits = await fetchRecentCommits(owner, repo, 10, fallbackToken);
       return formatCommitsForLLM(commits);
     } else {
-      const prs = await fetchRecentPRs(owner, repo, 10);
+      const prs = await fetchRecentPRs(owner, repo, 10, fallbackToken);
       return formatPRsForLLM(prs);
     }
   }
@@ -145,12 +151,15 @@ async function triageNode(state: AgentStateType): Promise<Partial<AgentStateType
 }
 
 async function investigateNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
-  const { incidentId } = state;
+  const { incidentId, githubToken } = state;
   await updateIncidentStatus(incidentId, "investigating");
 
-  // Call Token Vault wrapped GitHub tools
-  const commitStrings = await invokeGitHubTool(githubReadCommits, "fetch commits", incidentId, "Fetched commits");
-  const prStrings = await invokeGitHubTool(githubReadPRs, "fetch PRs", incidentId, "Fetched PRs");
+  // Call Token Vault wrapped GitHub tools. If the in-graph Token Vault
+  // exchange fails (throws GraphInterrupt), fall back to using the
+  // pre-exchanged github_token from the stream route.
+  const fallback = githubToken || undefined;
+  const commitStrings = await invokeGitHubTool(githubReadCommits, "fetch commits", incidentId, "Fetched commits", fallback);
+  const prStrings = await invokeGitHubTool(githubReadPRs, "fetch PRs", incidentId, "Fetched PRs", fallback);
 
   return { phase: "diagnosing", commits: commitStrings, prs: prStrings };
 }
@@ -380,16 +389,18 @@ function getApp() {
  * Run the agent workflow. Uses MemorySaver checkpointer so the graph
  * state is persisted across the CIBA interrupt/resume cycle.
  */
-export async function runAgentWorkflow(incidentId: string, accessToken?: string) {
+export async function runAgentWorkflow(incidentId: string, accessToken?: string, githubToken?: string) {
   const incident = await getIncident(incidentId);
   if (!incident) return;
 
-  // Pass the user's Auth0 access token in configurable so Token Vault
-  // wrappers can use it for the RFC 8693 token exchange
+  // Pass both tokens in configurable:
+  // - auth0_access_token: for Token Vault SDK wrappers (RFC 8693 exchange)
+  // - github_token: pre-exchanged GitHub token (fallback if in-graph exchange fails)
   const config = {
     configurable: {
       thread_id: incidentId,
       auth0_access_token: accessToken,
+      github_token: githubToken,
       service: incident.affected_service,
     },
   };
@@ -403,6 +414,7 @@ export async function runAgentWorkflow(incidentId: string, accessToken?: string)
       severity: incident.severity,
       service: incident.affected_service,
       breakGlass: incident.break_glass === 1,
+      githubToken: githubToken || "",
     },
     config
   );

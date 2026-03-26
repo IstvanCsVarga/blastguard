@@ -29,6 +29,9 @@ export const AgentState = Annotation.Root({
 
   // Operator context (for CIBA)
   operatorId: Annotation<string>({ reducer: (_, next) => next, default: () => "" }),
+
+  // Token Vault pre-exchanged GitHub token (fallback if in-graph exchange fails)
+  githubToken: Annotation<string>({ reducer: (_, next) => next, default: () => "" }),
 });
 
 export type AgentStateType = typeof AgentState.State;

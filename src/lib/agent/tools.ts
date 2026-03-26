@@ -1,6 +1,10 @@
 import { DynamicTool } from "@langchain/core/tools";
 import { auth0AI } from "@/lib/auth0-ai";
 import { getAccessTokenFromTokenVault } from "@auth0/ai-langchain";
+import { SUBJECT_TOKEN_TYPES } from "@auth0/ai";
+
+// Token exchange subject type — triggers RFC 8693 exchange instead of passthrough
+const EXCHANGE_ACCESS_TOKEN = SUBJECT_TOKEN_TYPES.SUBJECT_TYPE_ACCESS_TOKEN;
 import {
   fetchRecentCommits,
   fetchRecentPRs,
@@ -101,6 +105,7 @@ export const githubReadCommits = auth0AI.withTokenVault(
   {
     connection: "github",
     scopes: ["repo:status", "read:org"],
+    subjectTokenType: EXCHANGE_ACCESS_TOKEN,
     // accessToken is injected via LangGraph configurable at runtime
     accessToken: (_args: unknown[], config: Record<string, unknown>) => {
       const configurable = config?.configurable as Record<string, string> | undefined;
@@ -114,6 +119,7 @@ export const githubReadPRs = auth0AI.withTokenVault(
   {
     connection: "github",
     scopes: ["repo:status", "read:org"],
+    subjectTokenType: EXCHANGE_ACCESS_TOKEN,
     accessToken: (_args: unknown[], config: Record<string, unknown>) => {
       const configurable = config?.configurable as Record<string, string> | undefined;
       return configurable?.auth0_access_token;
@@ -126,6 +132,7 @@ export const githubRollback = auth0AI.withTokenVault(
   {
     connection: "github",
     scopes: ["repo", "workflow"],
+    subjectTokenType: EXCHANGE_ACCESS_TOKEN,
     accessToken: (_args: unknown[], config: Record<string, unknown>) => {
       const configurable = config?.configurable as Record<string, string> | undefined;
       return configurable?.auth0_access_token;
@@ -138,6 +145,7 @@ export const slackNotify = auth0AI.withTokenVault(
   {
     connection: "slack",
     scopes: ["chat:write", "channels:read"],
+    subjectTokenType: EXCHANGE_ACCESS_TOKEN,
     accessToken: (_args: unknown[], config: Record<string, unknown>) => {
       const configurable = config?.configurable as Record<string, string> | undefined;
       return configurable?.auth0_access_token;
