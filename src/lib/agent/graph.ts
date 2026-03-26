@@ -70,9 +70,8 @@ async function fgaRevoke(incidentId: string, agent: string, service: string) {
 // These call the Token Vault wrapped tools and handle the case
 // where Token Vault interrupts (user hasn't connected their account).
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function invokeGitHubTool(
-  tool: any,
+  tool: { invoke: (input: string) => Promise<unknown> },
   input: string,
   incidentId: string,
   label: string

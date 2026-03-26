@@ -16,7 +16,7 @@ const DEMO_REPO_NAME = process.env.DEMO_REPO_NAME || "netbird";
 const fetchCommitsTool = new DynamicTool({
   name: "fetch_github_commits",
   description: "Fetch recent commits from the affected service's GitHub repository using Token Vault credentials",
-  func: async (_input: string): Promise<string> => {
+  func: async (): Promise<string> => {
     // Get the Token Vault exchanged token (if available)
     let token: string | undefined;
     try {
@@ -41,7 +41,7 @@ const fetchCommitsTool = new DynamicTool({
 const fetchPRsTool = new DynamicTool({
   name: "fetch_github_prs",
   description: "Fetch recent pull requests from the affected service's GitHub repository using Token Vault credentials",
-  func: async (_input: string): Promise<string> => {
+  func: async (): Promise<string> => {
     let token: string | undefined;
     try {
       token = getAccessTokenFromTokenVault();
