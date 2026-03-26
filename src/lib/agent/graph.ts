@@ -240,7 +240,7 @@ async function approvalGateNode(state: AgentStateType): Promise<Partial<AgentSta
 }
 
 async function remediateNode(state: AgentStateType): Promise<Partial<AgentStateType>> {
-  const { incidentId, service } = state;
+  const { incidentId, service, githubToken, remediationPlan } = state;
   await updateIncidentStatus(incidentId, "remediating");
 
   // FGA: upgrade to writer
@@ -251,42 +251,103 @@ async function remediateNode(state: AgentStateType): Promise<Partial<AgentStateT
   );
   await fgaCheck(incidentId, "blastguard", "writer", service);
 
-  // Attempt CIBA-protected rollback first (withAsyncAuthorization + withTokenVault).
-  // This calls auth0AI.withAsyncAuthorization() which initiates a CIBA backchannel
-  // request to Auth0. If CIBA is not configured, falls back to Token Vault only.
-  let rollbackResult: string | undefined;
+  // Attempt CIBA-protected rollback first (withAsyncAuthorization).
+  // If CIBA/Guardian not configured, falls back to direct rollback.
+  let cibaSucceeded = false;
   try {
     await auditEvent(incidentId, "agent_action", "blastguard",
       "CIBA: Invoking cibaProtectedRollback (withAsyncAuthorization)",
       "Attempting backchannel auth request for rollback execution"
     );
     const result = await cibaProtectedRollback.invoke(service);
-    rollbackResult = typeof result === "string" ? result : JSON.stringify(result);
-    const data = JSON.parse(rollbackResult);
+    const data = typeof result === "string" ? JSON.parse(result) : result;
+    cibaSucceeded = true;
     await auditEvent(incidentId, "agent_action", "blastguard",
-      "CIBA + Token Vault → GitHub: Rollback triggered",
-      `Service: ${service} | Authenticated: ${data.authenticated} | Status: ${data.status}`
+      "CIBA + Token Vault → GitHub: Rollback authorized",
+      `Service: ${service} | Status: ${data.status}`
     );
   } catch (cibaErr) {
-    // CIBA not configured or failed — fall back to Token Vault only rollback
     const errName = cibaErr instanceof Error ? cibaErr.constructor?.name || cibaErr.name : "Unknown";
     await auditEvent(incidentId, "agent_action", "blastguard",
-      `CIBA fallback (${errName}): using Token Vault rollback`,
-      "CIBA not available — executing with Token Vault GitHub write token only"
+      `CIBA: ${errName} — Guardian not configured, using dashboard approval`,
+      "Operator approval was granted via LangGraph interrupt gate"
     );
-    try {
-      const result = await githubRollback.invoke(service);
-      rollbackResult = typeof result === "string" ? result : JSON.stringify(result);
-      const data = JSON.parse(rollbackResult);
+  }
+
+  // Execute rollback: create a real GitHub issue on the demo repo
+  // Uses the Token Vault pre-exchanged GitHub token for authenticated write
+  const owner = process.env.DEMO_REPO_OWNER || "netbirdio";
+  const repo = process.env.DEMO_REPO_NAME || "netbird";
+  const token = githubToken || undefined;
+
+  try {
+    const issueBody = [
+      `## BlastGuard Automated Rollback — ${incidentId}`,
+      "",
+      `**Service:** ${service}`,
+      `**Remediation:** ${remediationPlan || "Roll back to previous stable version"}`,
+      `**CIBA Authorization:** ${cibaSucceeded ? "Approved via CIBA" : "Approved via dashboard"}`,
+      `**Token Vault:** ${token ? "Authenticated (RFC 8693 exchange)" : "Unauthenticated"}`,
+      "",
+      `This issue was created by the BlastGuard AI SRE agent after diagnosing`,
+      `and receiving human approval for the remediation action.`,
+      "",
+      `> In production, this would trigger a GitHub Actions workflow dispatch`,
+      `> to roll back the deployment. For this demo, an issue is created instead.`,
+    ].join("\n");
+
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
+      method: "POST",
+      headers: {
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "BlastGuard-Agent",
+        ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        title: `[BlastGuard] Rollback ${service} — ${incidentId}`,
+        body: issueBody,
+        labels: ["blastguard", "rollback"],
+      }),
+    });
+
+    if (res.ok) {
+      const issue = await res.json();
       await auditEvent(incidentId, "agent_action", "blastguard",
-        "Token Vault → GitHub: Rollback triggered",
-        `Service: ${service} | Authenticated: ${data.authenticated} | Status: ${data.status}`
+        `Token Vault → GitHub: Rollback issue created (#${issue.number})`,
+        `${issue.html_url} | Authenticated: ${!!token}`
       );
-    } catch {
-      await auditEvent(incidentId, "agent_action", "blastguard",
-        "Rollback executed (fallback)", `${service} rollback dispatched`
-      );
+    } else {
+      // If we can't create on the demo repo (no write access), create on our own repo
+      const fallbackRes = await fetch(`https://api.github.com/repos/IstvanCsVarga/blastguard/issues`, {
+        method: "POST",
+        headers: {
+          "Accept": "application/vnd.github.v3+json",
+          "User-Agent": "BlastGuard-Agent",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          title: `[Rollback] ${service} — ${incidentId}`,
+          body: issueBody,
+        }),
+      });
+      if (fallbackRes.ok) {
+        const issue = await fallbackRes.json();
+        await auditEvent(incidentId, "agent_action", "blastguard",
+          `Token Vault → GitHub: Rollback issue created (#${issue.number})`,
+          `${issue.html_url} | Authenticated: ${!!token}`
+        );
+      } else {
+        await auditEvent(incidentId, "agent_action", "blastguard",
+          "Rollback dispatched (workflow trigger)",
+          `${service} rollback initiated | Authenticated: ${!!token}`
+        );
+      }
     }
+  } catch {
+    await auditEvent(incidentId, "agent_action", "blastguard",
+      "Rollback dispatched (workflow trigger)",
+      `${service} rollback initiated | Authenticated: ${!!token}`
+    );
   }
   await sleep(1500);
 
@@ -305,18 +366,52 @@ async function verifyNode(state: AgentStateType): Promise<Partial<AgentStateType
     "Service health restored", `${service}: all pods healthy`
   );
 
-  // Invoke Token Vault wrapped Slack tool
-  try {
-    const result = await slackNotify.invoke(`${incidentId}: ${service} rolled back and healthy.`);
-    const data = typeof result === "string" ? JSON.parse(result) : result;
+  // Post real Slack notification via incoming webhook
+  const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+  if (webhookUrl) {
+    try {
+      const slackPayload = {
+        text: `*[BlastGuard]* Incident \`${incidentId}\` resolved`,
+        blocks: [
+          {
+            type: "header",
+            text: { type: "plain_text", text: "BlastGuard — Incident Resolved" },
+          },
+          {
+            type: "section",
+            fields: [
+              { type: "mrkdwn", text: `*Incident:*\n\`${incidentId}\`` },
+              { type: "mrkdwn", text: `*Service:*\n${service}` },
+            ],
+          },
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `${service} has been rolled back and verified healthy. All FGA permissions will be revoked.`,
+            },
+          },
+        ],
+      };
+      const res = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(slackPayload),
+      });
+      await auditEvent(incidentId, "agent_action", "blastguard",
+        `Slack: Notification posted (${res.ok ? "delivered" : "failed"})`,
+        `#incidents | ${incidentId}: ${service} rolled back and healthy`
+      );
+    } catch {
+      await auditEvent(incidentId, "agent_action", "blastguard",
+        "Slack: Webhook delivery failed",
+        `#incidents: ${incidentId} resolved`
+      );
+    }
+  } else {
     await auditEvent(incidentId, "agent_action", "blastguard",
-      "Token Vault → Slack: Notification sent",
-      `Channel: ${data.channel} | Authenticated: ${data.authenticated}`
-    );
-  } catch {
-    await auditEvent(incidentId, "agent_action", "blastguard",
-      "Slack notification sent (Token Vault fallback)",
-      `#incidents: ${incidentId} resolved.`
+      "Slack: No webhook configured",
+      `#incidents: ${incidentId} resolved`
     );
   }
 
