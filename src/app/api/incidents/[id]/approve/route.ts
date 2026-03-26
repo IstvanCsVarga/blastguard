@@ -29,6 +29,7 @@ export async function POST(
     `Approved: ${incident.remediation_plan}`
   );
 
+  // Resume the LangGraph from the interrupt point using Command.resume()
   resumeAfterApproval(id).catch(console.error);
 
   return NextResponse.json({ message: "Approved", incident_id: id });

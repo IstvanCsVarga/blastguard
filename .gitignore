@@ -39,8 +39,9 @@ yarn-error.log*
 *.db-wal
 *.db-shm
 
-# Playwright
+# Playwright / local dev files
 test-flow.ts
+SUBMISSION.md
 
 # vercel
 .vercel

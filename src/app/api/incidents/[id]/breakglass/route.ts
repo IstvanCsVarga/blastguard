@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIncident, setBreakGlass } from "@/lib/db";
 import { auditEvent } from "@/lib/audit";
-import { executePostApproval } from "@/lib/agent-workflow";
+import { resumeAfterApproval } from "@/lib/agent-workflow";
 
 export async function POST(
   _req: NextRequest,
@@ -20,23 +20,18 @@ export async function POST(
 
   await setBreakGlass(id, true);
 
-  await auditEvent(
-    id,
-    "break_glass",
-    "operator",
+  await auditEvent(id, "break_glass", "operator",
     "BREAK GLASS activated by operator",
-    "CIBA approval bypass enabled. Enhanced logging active. Post-incident review flagged."
+    "CIBA approval bypass enabled. Enhanced logging active."
   );
 
   if (incident.status === "awaiting_approval") {
-    await auditEvent(
-      id,
-      "break_glass",
-      "system",
+    await auditEvent(id, "break_glass", "system",
       "BREAK GLASS: Bypassing pending CIBA approval",
-      "Proceeding to remediation without human approval"
+      "Resuming LangGraph from interrupt point"
     );
-    executePostApproval(id, incident.affected_service).catch(console.error);
+    // Resume the graph — break glass flag is checked in the approval_gate node
+    resumeAfterApproval(id).catch(console.error);
   }
 
   return NextResponse.json({ message: "Break glass activated", incident_id: id });
